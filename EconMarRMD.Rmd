@@ -1,0 +1,344 @@
+---
+title: "Economic Effects on Marriage"
+author: "Brandon Huff"
+date: "Revised on 2019-09-17"
+output: 
+  pdf_document:
+    fig_height: 2
+    fig_width: 3.5
+    df_print: kable
+---
+```{r, setup, include=FALSE}
+# Load necessary packages
+require(mosaic)
+require(kableExtra)
+require(forcats)
+require(lmtest)
+require(emmeans)
+require(Stat2Data)
+
+# Load additional packages here 
+
+# Set default chunk and display options
+knitr::opts_chunk$set(
+  tidy = F,     # display code as typed
+  size = "small",   # slightly smaller font for code
+  comment = "\t",   # tab plain R output
+  fig.align = "center",   # center figures
+  warning = F, message = F)   # suppress warnings & messages in knitted doc   
+theme_set(theme_classic())   # greyscale ggplot them
+options(scipen = 1) # don't be so quick to use scientific notation
+```
+
+
+
+
+# Variables of Interest
+Sex (SEX)
+Age (AGE)
+Marital Status (MAR)
+Year Last Married (MARHYP)
+Divorced in the past 12 months (MARHD)
+Family Income in the past 12 months (FINCP)
+Region (REGION.x)
+Family Income (FamIncome)
+Personal Income (PersonalIncome)
+Family presence and age of related children (FPARC)
+Number of related children in household (NRC)
+Work status of householder or spouse in family households (WORKSTAT)
+Same-sex married couple households (SSMC)
+# Data wrangling
+
+Get the data into the format needed for analysis. Any time in other sections that you realize your data should actually look a different way (e.g, maybe you decide you really want to collapse a categorical variable or something), make sure to come back to this section to implement that change from the beginning. This will be an iterative process!
+## Rename Data
+```{r}
+# read in data
+acs230 <- read.file("Data/acs230_3k.csv")
+# wrangle!!
+acs230 <- rename(acs230, 
+                 MaritalStatus = MAR,
+                 Age = AGEP,
+                 Sex = SEX,
+                 Region = REGION.x,
+                 Race = RAC1P,
+                 YearMarried = MARHYP,
+                 FamIncome = FINCP,
+                 PersonalIncome = PINCP)
+
+```
+## Mutate Data
+```{r}
+# mutate
+acs230 <- mutate(acs230, 
+                 Race = fct_recode(as.factor(Race),
+                           "White alone"= "1", 
+                           "Black or AA alone" = "2",
+                           "Asian alone" = "6",
+                           "Two or More Races" = "9"),
+                 Race = fct_collapse(as.factor(Race),
+                                     "Other" = 
+                                       c("3", "4", "5", "8", "7")),
+                 MaritalStatus = fct_recode(as.factor(MaritalStatus),
+                                    "Married" = "1",
+                                    "Widowed" = "2",
+                                    "Divorced" = "3",
+                                    "Separated" = "4",
+                                    "NeverMarried" = "5"),
+                 Sex = fct_recode(as.factor(Sex),
+                                  "Male" = "1",
+                                  "Female" = "2"),
+                 FPARC = fct_recode(as.factor(FPARC),
+                                    "5 years only" = "1",
+                                    "5-17 years only" = "2",
+                                    "5 years and 17 years" = "3",
+                                    "No children" = "4"),
+                 BinaryIncome = ifelse(PersonalIncome<100000,
+                                       FALSE, TRUE),
+                 BinaryMarriage = ifelse(MaritalStatus=="Divorced",
+                                         TRUE, FALSE),
+                 SSMC = fct_recode(as.factor(SSMC),
+                                   "No" = "0",
+                                   "Yes" = "1",
+                                   "All couples" = "2"),
+                 LogPI = log(PersonalIncome),
+                 AgeGrp = fct_collapse(as.factor(Age), 
+                               "00-09" = c("00", "01", "02", "03", "04", "05",
+                                         "06", "07", "08", "09"),
+                               "10-19" = c("10", "11", "12", "13", "14", "15",
+                                         "16", "17", "18", "19"),
+                               "20-29" = c("20", "21", "22", "23", "24", "25",
+                                         "26", "27", "28", "29"),
+                               "30-09" = c("30", "31", "32", "33", "34", "35",
+                                         "36", "37", "38", "39"),
+                               "40-49" = c("40", "41", "42", "43", "44", "45",
+                                         "46", "47", "48", "49"),
+                               "50-59" = c("50", "51", "52", "53", "54", "55",
+                                         "56", "57", "58", "59"),
+                               "60-69" = c("60", "61", "62", "63", "64", "65",
+                                         "66", "67", "68", "69"),
+                               "70-79" = c("70", "71", "72", "73", "74", "75",
+                                         "76", "77", "78", "79"),
+                               "80-89" = c("80", "81", "82", "83", "84", "85",
+                                         "86", "87", "88", "89"),
+                               "90-99" = c("90", "91", "92", "93", "94", "95",
+                                         "96", "97", "98", "99")))
+  
+
+```
+## Filter
+```{r}
+adults <- filter(acs230, Age >= 18, PersonalIncome >0,)
+data2 <- adults%>%filter(is.na(FPARC)==FALSE)
+adults2 <- filter(adults, Age >=30 )
+```
+
+# Data exploration
+
+Explore distributions and associations graphically and numerically.
+```{r}
+#View(adults)
+# numeric summaires
+group_by(acs230, Race) %>% summarize(meanAge = mean(Age))
+```
+```{r}
+#age distribution
+gf_histogram( ~ Age, data = adults2)
+#number in each Age Group
+group_by(adults2, AgeGrp)%>%
+  summarize(Count = n())
+group_by(adults2, Region)%>%
+  summarize(Count = n())
+group_by(adults2, Sex)%>%
+  summarize(Count = n())
+#Personal Income Distribution
+gf_histogram( ~ PersonalIncome, data = adults2)
+#Personal Income(log) distribution
+gf_histogram( ~ LogPI, data = adults2)
+#Marital Status distribution
+gf_bar( ~ MaritalStatus, data = adults2, stat="count")
+#Race distribution
+gf_bar( ~ Race, data = adults2, stat="count")
+#Number in each Race
+group_by(adults2, Race)%>%
+  summarize(RaceCount = n())
+#FPARC distribution
+group_by(adults2, FPARC)%>%
+  summarize(FPARCCount = n())
+#FPARC distribution
+group_by(adults2, SSMC)%>%
+  summarize(SSMCCount = n())
+#Boxplot of each Marital Satus distribution of Personal Income
+gf_boxplot(PersonalIncome ~ MaritalStatus, data = adults2)
+#Marital Status table
+group_by(adults2, MaritalStatus)%>%
+  summarize(meanFamIncome = mean(FamIncome, na.rm = TRUE),
+            meanPersonalIncome = mean(PersonalIncome, na.rm = TRUE),
+            MaritalStatusCount = n(),
+            meanAge = mean(Age))
+#Personal Income Summary
+summarize(adults2, mean = mean(PersonalIncome), standard = sd(PersonalIncome, na.rm = TRUE))
+#NRC Summary
+summarize(adults2, mean = mean(NRC, na.rm = TRUE), standard = sd(NRC, na.rm = TRUE))
+#Year Married Summary
+summarize(adults2, mean = mean(YearMarried, na.rm = TRUE), standard = sd(YearMarried, na.rm = TRUE))
+
+```
+```{r}
+```
+
+
+# Data analysis
+## Multiple Regression Model
+
+Perform analyses.
+```{r}
+lm01 <- lm(LogPI ~ MaritalStatus + Age + Sex + Region + Race + YearMarried
+           + MARHD + FPARC +  NRC , data = adults2)
+msummary(lm01)
+anova(lm01)
+```
+```{r}
+#drop Age
+lm02 <- lm(LogPI ~ MaritalStatus + Sex + NRC + Region + Race + YearMarried
+           + MARHD + FPARC + SSMC,data = adults2)
+msummary(lm02)
+anova(lm02)
+```
+```{r}
+#drop MARHD variable
+lm03 <- lm(LogPI ~ MaritalStatus + Region + Race + YearMarried
+           + FPARC + Sex + NRC,data = adults2)
+msummary(lm03)
+anova(lm03)
+```
+```{r}
+#drop Race variable
+lm04 <- lm(LogPI ~ SSMC + MaritalStatus + Region + YearMarried
+           + FPARC + NRC + Sex, data = adults2)
+msummary(lm04)
+anova(lm04)
+```
+```{r}
+#drop Region
+lm05 <- lm(LogPI ~ MaritalStatus + FPARC + NRC 
+           + YearMarried + Sex + Age, data = adults2)
+msummary(lm05)
+anova(lm05)
+```
+```{r}
+confint(lm05, 'Age')
+```
+```{r}
+confint(lm05, 'YearMarried')
+```
+```{r}
+confint(lm05, 'NRC')
+```
+```{r}
+confint(lm05, 'SexFemale')
+```
+
+```{r}
+confint(lm05, 'MaritalStatusWidowed')
+confint(lm05, 'MaritalStatusDivorced')
+confint(lm05, 'MaritalStatusSeparated')
+```
+```{r}
+confint(lm05, 'FPARC5-17 years only')
+confint(lm05, 'FPARC5 years and 17 years')
+confint(lm05, 'FPARCNo childreny')
+```
+
+```{r}
+mplot(lm05, c(1,2))
+```
+## Logistic Regression Model
+```{r}
+#BinaryMarriage distribution
+group_by(adults2, BinaryMarriage)%>%
+  summarize(Count = n())
+```
+
+```{r}
+logmodel0 <- glm(BinaryMarriage ~ LogPI + Sex + Age
+                + (LogPI * Sex) + (LogPI * Age), 
+                data = adults2, family = binomial(logit))
+msummary(logmodel0)
+anova(logmodel0)
+```
+```{r}
+#drop PersonalIcome and Age interaction term
+logmodel <- glm(BinaryMarriage ~ LogPI + Sex + Age
+                + (LogPI * Sex), 
+                data = adults2, family = binomial(logit))
+msummary(logmodel)
+anova(logmodel)
+```
+```{r}
+#drop Age 
+logmodel1 <- glm(BinaryMarriage ~ PersonalIncome + Sex
+                + (PersonalIncome * Sex), 
+                data = adults2, family = binomial(logit))
+msummary(logmodel1)
+anova(logmodel1)
+```
+```{r}
+#Empirical Logit Plot
+emplogitplot1(BinaryMarriage ~ PersonalIncome + Sex + 
+                (PersonalIncome * Sex), data = adults2, ngroups = 20)
+```
+
+## PostHoc Analysis
+```{r}
+PHmod1 <- lm(data = adults2, LogPI ~ Age + MaritalStatus + FPARC + NRC 
+           + YearMarried + Sex) 
+car::Anova(PHmod1, type = "III")
+```
+
+```{r}
+# Pairwise comparisons of MaritalStatus using Tukey's adjustment
+(pwMaritalStatus <- emmeans(PHmod1, specs = pairwise ~ MaritalStatus))
+```
+```{r}
+ # Corresponding confidence intervals
+confint(pwMaritalStatus)
+```
+```{r}
+# Pairwise comparisons of FPARC using Tukey's adjustment
+(pwFPARC <- emmeans(PHmod1, specs = pairwise ~ FPARC))
+```
+```{r}
+ # Corresponding confidence intervals
+confint(pwFPARC)
+```
+```{r}
+# Pairwise comparisons of Sex using Tukey's adjustment
+(pwSex <- emmeans(PHmod1, specs = pairwise ~ Sex))
+```
+```{r}
+ # Corresponding confidence intervals
+confint(pwSex)
+```
+```{r}
+PHmod2 <- glm(data = adults2, BinaryMarriage ~ PersonalIncome + Sex
+                + (PersonalIncome * Sex)) 
+car::Anova(PHmod2, type = "III")
+```
+
+```{r}
+confint(logmodel1, 'PersonalIncome')
+
+```
+```{r}
+
+```
+
+
+
+# Assessment
+
+
+\newpage
+# Current questions
+
+If you are running into issues or have wrangling problems outside of your skillset, let me know here how I can help! You can also ask for pointers on how to implement a method that maybe we haven't covered in course but you would like to include.
